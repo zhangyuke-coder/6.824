@@ -6,7 +6,7 @@ struct TaskArgs {
 
 struct TaskReply
 {
-    Task* task;
+    Task task;
 };
 
 

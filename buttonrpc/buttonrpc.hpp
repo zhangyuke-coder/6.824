@@ -11,9 +11,12 @@
 #include <string>
 #include <sstream>
 #include <functional>
+#include <memory>
 #include <zmq.hpp>
 #include "Serializer.hpp"
 
+
+class Serializer;
 
 template<typename T>
 struct type_xx{	typedef T type; };
@@ -21,6 +24,49 @@ struct type_xx{	typedef T type; };
 template<>
 struct type_xx<void>{ typedef int8_t type; };
 
+
+// 打包帮助模板
+template<typename Tuple, std::size_t... Is>
+void package_params_impl(Serializer& ds, const Tuple& t, std::index_sequence<Is...>)
+{
+	initializer_list<int>{((ds << std::get<Is>(t)), 0)...};
+}
+
+template<typename... Args>
+void package_params(Serializer& ds, const std::tuple<Args...>& t)
+{
+	package_params_impl(ds, t, std::index_sequence_for<Args...>{});
+}
+
+// 用tuple做参数调用函数模板类
+template<typename Function, typename Tuple, std::size_t... Index>
+decltype(auto) invoke_impl(Function&& func, Tuple&& t, std::index_sequence<Index...>)
+{
+	return func(std::get<Index>(std::forward<Tuple>(t))...);
+}
+
+template<typename Function, typename Tuple>
+decltype(auto) invoke(Function&& func, Tuple&& t)
+{
+	constexpr auto size = std::tuple_size<typename std::decay<Tuple>::type>::value;
+	return invoke_impl(std::forward<Function>(func), std::forward<Tuple>(t), std::make_index_sequence<size>{});
+}
+
+// 调用帮助类，主要用于返回是否void的情况
+template<typename R, typename F, typename ArgsTuple>
+typename std::enable_if<std::is_same<R, void>::value, typename type_xx<R>::type >::type
+call_helper(F f, ArgsTuple args) {
+	invoke(f, args);
+	return 0;
+}
+
+template<typename R, typename F, typename ArgsTuple>
+typename std::enable_if<!std::is_same<R, void>::value, typename type_xx<R>::type >::type
+call_helper(F f, ArgsTuple args) {
+	return invoke(f, args);
+}
+
+// rpc 类定义
 class buttonrpc
 {
 public:
@@ -33,7 +79,8 @@ public:
 		RPC_ERR_FUNCTIION_NOT_BIND,
 		RPC_ERR_RECV_TIMEOUT
 	};
-	// return value
+
+	// wrap return value
 	template<typename T>
 	class value_t {
 	public:
@@ -88,23 +135,23 @@ public:
 	void bind(std::string name, F func, S* s);
 
 	// client
+	template<typename R, typename... Params>
+	value_t<R> call(std::string name, Params... ps) {
+		using args_type = std::tuple<typename std::decay<Params>::type...>;
+		args_type args = std::make_tuple(ps...);
+
+		Serializer ds;
+		ds << name;
+		package_params(ds, args);
+		return net_call<R>(ds);
+	}
+
 	template<typename R>
-	value_t<R> call(std::string name);
-
-	template<typename R, typename P1>
-	value_t<R> call(std::string name, P1);
-
-	template<typename R, typename P1, typename P2>
-	value_t<R> call(std::string name, P1, P2);
-
-	template<typename R, typename P1, typename P2, typename P3>
-	value_t<R> call(std::string name, P1, P2, P3);
-
-	template<typename R, typename P1, typename P2, typename P3, typename P4>
-	value_t<R> call(std::string name, P1, P2, P3, P4);
-
-	template<typename R, typename P1, typename P2, typename P3, typename P4, typename P5>
-	value_t<R> call(std::string name, P1, P2, P3, P4, P5);
+	value_t<R> call(std::string name) {
+		Serializer ds;
+		ds << name;
+		return net_call<R>(ds);
+	}
 
 private:
 	Serializer* call_(std::string name, const char* data, int len);
@@ -118,136 +165,95 @@ private:
 	template<typename F, typename S>
 	void callproxy(F fun, S* s, Serializer* pr, const char* data, int len);
 
-	// PROXY FUNCTION POINT
-	template<typename R>
-	void callproxy_(R(*func)(), Serializer* pr, const char* data, int len) {
-		callproxy_(std::function<R()>(func), pr, data, len);
+	// 函数指针
+	template<typename R, typename... Params>
+	void callproxy_(R(*func)(Params...), Serializer* pr, const char* data, int len) {
+		callproxy_(std::function<R(Params...)>(func), pr, data, len);
 	}
 
-	template<typename R, typename P1>
-	void callproxy_(R(*func)(P1), Serializer* pr, const char* data, int len) {
-		callproxy_(std::function<R(P1)>(func), pr, data, len);
+	// 类成员函数指针
+	template<typename R, typename C, typename S, typename... Params>
+	void callproxy_(R(C::* func)(Params...), S* s, Serializer* pr, const char* data, int len) {
+
+		using args_type = std::tuple<typename std::decay<Params>::type...>;
+
+		Serializer ds(StreamBuffer(data, len));
+		constexpr auto N = std::tuple_size<typename std::decay<args_type>::type>::value;
+		args_type args = ds.get_tuple < args_type >(std::make_index_sequence<N>{});
+
+		auto ff = [=](Params... ps)->R {
+			return (s->*func)(ps...);
+		};
+		typename type_xx<R>::type r = call_helper<R>(ff, args);
+
+		value_t<R> val;
+		val.set_code(RPC_ERR_SUCCESS);
+		val.set_val(r);
+		(*pr) << val;
 	}
 
-	template<typename R, typename P1, typename P2>
-	void callproxy_(R(*func)(P1, P2), Serializer* pr, const char* data, int len) {
-		callproxy_(std::function<R(P1, P2)>(func), pr, data, len);
+	// functional
+	template<typename R, typename... Params>
+	void callproxy_(std::function<R(Params... ps)> func, Serializer* pr, const char* data, int len) {
+		
+		using args_type = std::tuple<typename std::decay<Params>::type...>;
+
+		Serializer ds(StreamBuffer(data, len));
+		constexpr auto N = std::tuple_size<typename std::decay<args_type>::type>::value;
+		args_type args = ds.get_tuple < args_type > (std::make_index_sequence<N>{});
+
+		typename type_xx<R>::type r = call_helper<R>(func, args);
+
+		value_t<R> val;
+		val.set_code(RPC_ERR_SUCCESS);
+		val.set_val(r);
+		(*pr) << val;
 	}
-
-	template<typename R, typename P1, typename P2, typename P3>
-	void callproxy_(R(*func)(P1, P2, P3), Serializer* pr, const char* data, int len) {
-		callproxy_(std::function<R(P1, P2, P3)>(func), pr, data, len);
-	}
-
-	template<typename R, typename P1, typename P2, typename P3, typename P4>
-	void callproxy_(R(*func)(P1, P2, P3, P4), Serializer* pr, const char* data, int len) {
-		callproxy_(std::function<R(P1, P2, P3, P4)>(func), pr, data, len);
-	}
-
-	template<typename R, typename P1, typename P2, typename P3, typename P4, typename P5>
-	void callproxy_(R(*func)(P1, P2, P3, P4, P5), Serializer* pr, const char* data, int len) {
-		callproxy_(std::function<R(P1, P2, P3, P4, P5)>(func), pr, data, len);
-	}
-
-	// PROXY CLASS MEMBER
-	template<typename R, typename C, typename S>
-	void callproxy_(R(C::* func)(), S* s, Serializer* pr, const char* data, int len) {
-		callproxy_(std::function<R()>(std::bind(func, s)), pr, data, len);
-	}
-
-	template<typename R, typename C, typename S, typename P1>
-	void callproxy_(R(C::* func)(P1), S* s, Serializer* pr, const char* data, int len) {
-		callproxy_(std::function<R(P1)>(std::bind(func, s, std::placeholders::_1)), pr, data, len);
-	}
-
-	template<typename R, typename C, typename S, typename P1, typename P2>
-	void callproxy_(R(C::* func)(P1, P2), S* s, Serializer* pr, const char* data, int len) {
-		callproxy_(std::function<R(P1, P2)>(std::bind(func, s, std::placeholders::_1, std::placeholders::_2)), pr, data, len);
-	}
-
-	template<typename R, typename C, typename S, typename P1, typename P2, typename P3>
-	void callproxy_(R(C::* func)(P1, P2, P3), S* s, Serializer* pr, const char* data, int len) {
-		callproxy_(std::function<R(P1, P2, P3)>(std::bind(func, s, 
-			std::placeholders::_1, std::placeholders::_2, std::placeholders::_3)), pr, data, len);
-	}
-
-	template<typename R, typename C, typename S, typename P1, typename P2, typename P3, typename P4>
-	void callproxy_(R(C::* func)(P1, P2, P3, P4), S* s, Serializer* pr, const char* data, int len) {
-		callproxy_(std::function<R(P1, P2, P3, P4)>(std::bind(func, s,
-			std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4)), pr, data, len);
-	}
-
-	template<typename R, typename C, typename S, typename P1, typename P2, typename P3, typename P4, typename P5>
-	void callproxy_(R(C::* func)(P1, P2, P3, P4, P5), S* s, Serializer* pr, const char* data, int len) {
-		callproxy_(std::function<R(P1, P2, P3, P4, P5)>(std::bind(func, s,
-			std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4, std::placeholders::_5)), pr, data, len);
-	}
-
-	// PORXY FUNCTIONAL
-	template<typename R>
-	void callproxy_(std::function<R()>, Serializer* pr, const char* data, int len);
-
-	template<typename R, typename P1>
-	void callproxy_(std::function<R(P1)>, Serializer* pr, const char* data, int len);
-
-	template<typename R, typename P1, typename P2>
-	void callproxy_(std::function<R(P1, P2)>, Serializer* pr, const char* data, int len);
-
-	template<typename R, typename P1, typename P2, typename P3>
-	void callproxy_(std::function<R(P1, P2, P3)>, Serializer* pr, const char* data, int len);
-
-	template<typename R, typename P1, typename P2, typename P3, typename P4>
-	void callproxy_(std::function<R(P1, P2, P3, P4)>, Serializer* pr, const char* data, int len);
-
-	template<typename R, typename P1, typename P2, typename P3, typename P4, typename P5>
-	void callproxy_(std::function<R(P1, P2, P3, P4, P5)>, Serializer* pr, const char* data, int len);
 
 private:
 	std::map<std::string, std::function<void(Serializer*, const char*, int)>> m_handlers;
 
 	zmq::context_t m_context;
-	zmq::socket_t* m_socket;
+	std::unique_ptr<zmq::socket_t, std::function<void(zmq::socket_t*)>> m_socket;
 
 	rpc_err_code m_error_code;
 
 	int m_role;
 };
 
-buttonrpc::buttonrpc() : m_context(1){ 
+inline buttonrpc::buttonrpc() : m_context(1){
 	m_error_code = RPC_ERR_SUCCESS;
 }
 
-buttonrpc::~buttonrpc(){ 
-	m_socket->close();
-	delete m_socket;
+inline buttonrpc::~buttonrpc(){
 	m_context.close();
 }
 
 // network
-void buttonrpc::as_client( std::string ip, int port )
+inline void buttonrpc::as_client( std::string ip, int port )
 {
 	m_role = RPC_CLIENT;
-	m_socket = new zmq::socket_t(m_context, ZMQ_REQ);
+	m_socket = std::unique_ptr<zmq::socket_t, std::function<void(zmq::socket_t*)>>(new zmq::socket_t(m_context, ZMQ_REQ), [](zmq::socket_t* sock){ sock->close(); delete sock; sock =nullptr;});
 	ostringstream os;
 	os << "tcp://" << ip << ":" << port;
 	m_socket->connect (os.str());
 }
 
-void buttonrpc::as_server( int port )
+inline void buttonrpc::as_server( int port )
 {
 	m_role = RPC_SERVER;
-	m_socket = new zmq::socket_t(m_context, ZMQ_REP);
+	m_socket = std::unique_ptr<zmq::socket_t, std::function<void(zmq::socket_t*)>>(new zmq::socket_t(m_context, ZMQ_REP), [](zmq::socket_t* sock){ sock->close(); delete sock; sock =nullptr;});
 	ostringstream os;
 	os << "tcp://*:" << port;
 	m_socket->bind (os.str());
 }
 
-void buttonrpc::send( zmq::message_t& data )
+inline void buttonrpc::send( zmq::message_t& data )
 {
 	m_socket->send(data);
 }
 
-void buttonrpc::recv( zmq::message_t& data )
+inline void buttonrpc::recv( zmq::message_t& data )
 {
 	m_socket->recv(&data);
 }
@@ -260,7 +266,7 @@ inline void buttonrpc::set_timeout(uint32_t ms)
 	}
 }
 
-void buttonrpc::run()
+inline void buttonrpc::run()
 {
 	// only server can call
 	if (m_role != RPC_SERVER) {
@@ -283,9 +289,9 @@ void buttonrpc::run()
 	}
 }
 
-// �����������
+// 处理函数相关
 
-Serializer* buttonrpc::call_(std::string name, const char* data, int len)
+inline Serializer* buttonrpc::call_(std::string name, const char* data, int len)
 {
 	Serializer* ds = new Serializer();
 	if (m_handlers.find(name) == m_handlers.end()) {
@@ -300,7 +306,7 @@ Serializer* buttonrpc::call_(std::string name, const char* data, int len)
 }
 
 template<typename F>
-void buttonrpc::bind( std::string name, F func )
+inline void buttonrpc::bind( std::string name, F func )
 {
 	m_handlers[name] = std::bind(&buttonrpc::callproxy<F>, this, func, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3);
 }
@@ -312,7 +318,7 @@ inline void buttonrpc::bind(std::string name, F func, S* s)
 }
 
 template<typename F>
-void buttonrpc::callproxy( F fun, Serializer* pr, const char* data, int len )
+inline void buttonrpc::callproxy( F fun, Serializer* pr, const char* data, int len )
 {
 	callproxy_(fun, pr, data, len);
 }
@@ -321,96 +327,6 @@ template<typename F, typename S>
 inline void buttonrpc::callproxy(F fun, S * s, Serializer * pr, const char * data, int len)
 {
 	callproxy_(fun, s, pr, data, len);
-}
-
-// help call return value type is void function
-template<typename R, typename F>
-typename std::enable_if<std::is_same<R, void>::value, typename type_xx<R>::type >::type call_helper(F f) {
-	f();
-	return 0;
-}
-
-template<typename R, typename F>
-typename std::enable_if<!std::is_same<R, void>::value, typename type_xx<R>::type >::type call_helper(F f) {
-	return f();
-}
-
-template<typename R>
-void buttonrpc::callproxy_(std::function<R()> func, Serializer* pr, const char* data, int len)
-{
-	typename type_xx<R>::type r = call_helper<R>(std::bind(func));
-
-	value_t<R> val;
-	val.set_code(RPC_ERR_SUCCESS);
-	val.set_val(r);
-	(*pr) << val;
-}
-
-template<typename R, typename P1>
-void buttonrpc::callproxy_(std::function<R(P1)> func, Serializer* pr, const char* data, int len)
-{
-	Serializer ds(StreamBuffer(data, len));
-	P1 p1;
-	ds >> p1;
-	typename type_xx<R>::type r = call_helper<R>(std::bind(func, p1));
-
-	value_t<R> val;
-	val.set_code(RPC_ERR_SUCCESS);
-	val.set_val(r);
-	(*pr) << val;
-}
-
-template<typename R, typename P1, typename P2>
-void buttonrpc::callproxy_(std::function<R(P1, P2)> func, Serializer* pr, const char* data, int len )
-{
-	Serializer ds(StreamBuffer(data, len));
-	P1 p1; P2 p2;
-	ds >> p1 >> p2;
-	typename type_xx<R>::type r = call_helper<R>(std::bind(func, p1, p2));
-	
-	value_t<R> val;
-	val.set_code(RPC_ERR_SUCCESS);
-	val.set_val(r);
-	(*pr) << val;
-}
-
-template<typename R, typename P1, typename P2, typename P3>
-void buttonrpc::callproxy_(std::function<R(P1, P2, P3)> func, Serializer* pr, const char* data, int len)
-{
-	Serializer ds(StreamBuffer(data, len));
-	P1 p1; P2 p2; P3 p3;
-	ds >> p1 >> p2 >> p3;
-	typename type_xx<R>::type r = call_helper<R>(std::bind(func, p1, p2, p3));
-	value_t<R> val;
-	val.set_code(RPC_ERR_SUCCESS);
-	val.set_val(r);
-	(*pr) << val;
-}
-
-template<typename R, typename P1, typename P2, typename P3, typename P4>
-void buttonrpc::callproxy_(std::function<R(P1, P2, P3, P4)> func, Serializer* pr, const char* data, int len)
-{
-	Serializer ds(StreamBuffer(data, len));
-	P1 p1; P2 p2; P3 p3; P4 p4;
-	ds >> p1 >> p2 >> p3 >> p4;
-	typename type_xx<R>::type r = call_helper<R>(std::bind(func, p1, p2, p3, p4));
-	value_t<R> val;
-	val.set_code(RPC_ERR_SUCCESS);
-	val.set_val(r);
-	(*pr) << val;
-}
-
-template<typename R, typename P1, typename P2, typename P3, typename P4, typename P5>
-void buttonrpc::callproxy_(std::function<R(P1, P2, P3, P4, P5)> func, Serializer* pr, const char* data, int len)
-{
-	Serializer ds(StreamBuffer(data, len));
-	P1 p1; P2 p2; P3 p3; P4 p4; P5 p5;
-	ds >> p1 >> p2 >> p3 >> p4 >> p5;
-	typename type_xx<R>::type r = call_helper<R>(std::bind(func, p1, p2, p3, p4, p5));
-	value_t<R> val;
-	val.set_code(RPC_ERR_SUCCESS);
-	val.set_val(r);
-	(*pr) << val;
 }
 
 template<typename R>
@@ -438,52 +354,4 @@ inline buttonrpc::value_t<R> buttonrpc::net_call(Serializer& ds)
 
 	ds >> val;
 	return val;
-}
-
-template<typename R>
-inline buttonrpc::value_t<R> buttonrpc::call(std::string name)
-{
-	Serializer ds;
-	ds << name;
-	return net_call<R>(ds);
-}
-
-template<typename R, typename P1>
-inline buttonrpc::value_t<R> buttonrpc::call(std::string name, P1 p1)
-{
-	Serializer ds;
-	ds << name << p1;
-	return net_call<R>(ds);
-}
-
-template<typename R, typename P1, typename P2>
-inline buttonrpc::value_t<R> buttonrpc::call( std::string name, P1 p1, P2 p2 )
-{
-	Serializer ds;
-	ds << name << p1 << p2;
-	return net_call<R>(ds);
-}
-
-template<typename R, typename P1, typename P2, typename P3>
-inline buttonrpc::value_t<R> buttonrpc::call(std::string name, P1 p1, P2 p2, P3 p3)
-{
-	Serializer ds;
-	ds << name << p1 << p2 << p3;
-	return net_call<R>(ds);
-}
-
-template<typename R, typename P1, typename P2, typename P3, typename P4>
-inline buttonrpc::value_t<R> buttonrpc::call(std::string name, P1 p1, P2 p2, P3 p3, P4 p4)
-{
-	Serializer ds;
-	ds << name << p1 << p2 << p3 << p4;
-	return net_call<R>(ds);
-}
-
-template<typename R, typename P1, typename P2, typename P3, typename P4, typename P5>
-inline buttonrpc::value_t<R> buttonrpc::call(std::string name, P1 p1, P2 p2, P3 p3, P4 p4, P5 p5)
-{
-	Serializer ds;
-	ds << name << p1 << p2 << p3 << p4 << p5;
-	return net_call<R>(ds);
 }

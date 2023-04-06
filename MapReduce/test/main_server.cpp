@@ -75,7 +75,9 @@ PersonInfo foo_5(PersonInfo d,  int weigth)
 	ret.height = d.height + 10;
 	return ret;
 }
-
+int reqTask(int i) {
+	return i + 1;
+}
 int main()
 {
 	buttonrpc server;
@@ -86,7 +88,7 @@ int main()
 	server.bind("foo_3", std::function<int(int)>(foo_3));
 	server.bind("foo_4", foo_4);
 	server.bind("foo_5", foo_5);
-
+	server.bind("reqTask", reqTask);
 	ClassMem s;
 	server.bind("foo_6", &ClassMem::bar, &s);
 
