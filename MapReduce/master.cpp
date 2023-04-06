@@ -43,8 +43,10 @@ void Master::initReduceTask() {
     taskPhase_ = ReducePhase;
     taskStats_.clear();
     taskStats_.resize(nReduce_);
+    printf("-------initReduceTask--------------\n");
+    printf("-------initReduceTask--------------\n");
 }
-RegisterReply Master::RegWorker(RegisterArgs* args) {
+RegisterReply Master::RegWorker(rpc_conn conn, RegisterArgs args) {
     workerSeq_++;
     RegisterReply reply;
     reply.WorkerId = workerSeq_;
@@ -123,7 +125,7 @@ void Master::tickSchedule() {
     }
 }
 
-TaskReply Master::GetOneTask(TaskArgs args) {
+TaskReply Master::GetOneTask(rpc_conn conn, TaskArgs args) {
     std::unique_lock<std::mutex> lk(mtx_);
     while(tasks_.empty()) {
         cv_.wait(lk);
@@ -133,13 +135,14 @@ TaskReply Master::GetOneTask(TaskArgs args) {
     TaskReply reply;
     
     reply.task = task;
-    printf("in get one Task, \n");
-    printf("test------------------------------------\n");
-    if(reply.task.Alive) {
-        printf("Alive \n");
-    }
-    printf("reply %s \n", reply.task.FileName.c_str());
-    printf("reply %d \n", reply.task.Seq);
+    // printf("in get one Task, \n");
+    // printf("GetOneTask------------------------------------\n");
+    // if(reply.task.Alive) {
+    //     printf("Alive \n");
+    // }
+    // printf("reply %s \n", reply.task.FileName.c_str());
+    // printf("reply %d \n", reply.task.Seq);
+    // printf("GetOneTask------------------------------------\n");
     return reply;
 }
 

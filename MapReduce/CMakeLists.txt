@@ -10,6 +10,11 @@ project( RPC )
 include_directories(../)
 
 
+include_directories(
+        "../rest_rpc/"
+        "../rest_rpc/include"
+        "../rest_rpc/thirdparty/msgpack-c/include"
+        "../rest_rpc/thirdparty/asio")
 # add_library(mapreduce master.cpp worker.cpp)
 # target_link_libraries(mapreduce zmq)
 # add_subdirectory(test)
@@ -18,9 +23,9 @@ target_link_libraries(worker_main zmq pthread)
 add_executable(master_main master_main.cpp master.cpp)
 target_link_libraries(master_main zmq pthread)
 
-add_executable(test test.cpp)
-target_link_libraries(test pthread)
+# add_executable(test test.cpp)
+# target_link_libraries(test pthread)
 # add_executable(main_client main_client.cpp)
-# target_link_libraries(main_client zmq)
+# target_link_libraries(main_client zmq pthread)
 # add_executable(main_server main_server.cpp)
-# target_link_libraries(main_server zmq)
+# target_link_libraries(main_server zmq pthread)

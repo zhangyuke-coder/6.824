@@ -1,6 +1,6 @@
 #pragma once
 #include <string>
-
+#include "rest_rpc.hpp"
 
 using TaskPhase = int;
 constexpr TaskPhase MapPhase = 0;
@@ -13,6 +13,7 @@ struct Task {
     int Seq;
     TaskPhase Phase;
     bool Alive;
+    MSGPACK_DEFINE(FileName, NReduce, NMaps, Seq, Phase, Alive);
 };
 
 

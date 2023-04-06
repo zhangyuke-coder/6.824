@@ -1,99 +1,26 @@
-#include <string>
-#include <iostream>
-#include <functional>
-#include "buttonrpc/buttonrpc.hpp"
+#include <rest_rpc.hpp>
+using namespace rest_rpc;
+using namespace rpc_service;
+#include <fstream>
+
+#include "rpc.h"
 
 
-#define buttont_assert(exp) { \
-	if (!(exp)) {\
-		std::cout << "ERROR: "; \
-		std::cout << "function: " << __FUNCTION__  << ", line: " <<  __LINE__ << std::endl; \
-		system("pause"); \
-	}\
-}\
 
+person get_person(rpc_conn conn) { return {1, "tom", 20}; }
 
-// ��������
-void foo_1() {
-	
+RegisterReply reqwork(rpc_conn conn) {
+  RegisterReply reply;
+  reply.WorkerId = 4;
+  return reply;
 }
+int main() {
+  //  benchmark_test();
+  rpc_server server(9000, std::thread::hardware_concurrency());
 
-void foo_2(int arg1) {
-	buttont_assert(arg1 == 10);
-}
 
-int foo_3(int arg1) {
-	buttont_assert(arg1 == 10);
-	return arg1 * arg1;
-}
+  server.register_handler("get_person", get_person);
+  server.register_handler("reqwork", reqwork);
+  server.run();
 
-int foo_4(int arg1, std::string arg2, int arg3, float arg4) {
-	buttont_assert(arg1 == 10);
-	buttont_assert(arg2 == "buttonrpc");
-	buttont_assert(arg3 == 100);
-	buttont_assert((arg4 > 10.0) && (arg4 < 11.0));
-	return arg1 * arg3;
-}
-
-class ClassMem
-{
-public:
-	int bar(int arg1, std::string arg2, int arg3) {
-		buttont_assert(arg1 == 10);
-		buttont_assert(arg2 == "buttonrpc");
-		buttont_assert(arg3 == 100);
-		return arg1 * arg3;
-	}
-};
-
-struct PersonInfo
-{
-	int age;
-	std::string name;
-	float height;
-
-	// must implement
-	friend Serializer& operator >> (Serializer& in, PersonInfo& d) {
-		in >> d.age >> d.name >> d.height;
-		return in;
-	}
-	friend Serializer& operator << (Serializer& out, PersonInfo d) {
-		out << d.age << d.name << d.height;
-		return out;
-	}
-};
-
-PersonInfo foo_5(PersonInfo d,  int weigth)
-{
-	buttont_assert(d.age == 10);
-	buttont_assert(d.name == "buttonrpc");
-	buttont_assert(d.height == 170);
-
-	PersonInfo ret;
-	ret.age = d.age + 10;
-	ret.name = d.name + " is good";
-	ret.height = d.height + 10;
-	return ret;
-}
-int reqTask(int i) {
-	return i + 1;
-}
-int main()
-{
-	buttonrpc server;
-	server.as_server(5555);
-
-	server.bind("foo_1", foo_1);
-	server.bind("foo_2", foo_2);
-	server.bind("foo_3", std::function<int(int)>(foo_3));
-	server.bind("foo_4", foo_4);
-	server.bind("foo_5", foo_5);
-	server.bind("reqTask", reqTask);
-	ClassMem s;
-	server.bind("foo_6", &ClassMem::bar, &s);
-
-	std::cout << "run rpc server on: " << 5555 << std::endl;
-	server.run();
-
-	return 0;
 }

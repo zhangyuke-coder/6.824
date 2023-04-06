@@ -32,9 +32,9 @@ public:
     void run();
 public:
     void regTask(TaskArgs* args, Task* task);
-    TaskReply GetOneTask(TaskArgs args);
+    TaskReply GetOneTask(rpc_conn conn, TaskArgs args);
     ReportTaskReply ReportTask(ReportTaskArgs* args);
-    RegisterReply RegWorker(RegisterArgs* args);
+    RegisterReply RegWorker(rpc_conn conn, RegisterArgs args);
 private:
     void schedule();
     void initMapTask();

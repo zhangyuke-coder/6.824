@@ -3,7 +3,7 @@
 #include <functional>
 #include <vector>
 #include "common.h"
-#include "buttonrpc/buttonrpc.hpp"
+#include "rpc.h"
 
 struct KeyValue
 {
@@ -30,7 +30,7 @@ public:
     ~Worker();
     void run();
     
-    Task reqTask();
+    bool reqTask(Task* t);
     void doTask(Task t);
     void doMapTask(Task t);
     void doReduceTask(Task t);
@@ -38,8 +38,9 @@ public:
     void wregister();
     bool call(std::string rpcname, void* args, void* reply);
 private:
-    buttonrpc*   work_client_;
+    rest_rpc::rpc_client*   work_client_;
     int         id_;
     MapFunc     mapf_;
     ReduceFunc  reducef_;
+    int         maxCount_;
 };
