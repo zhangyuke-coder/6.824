@@ -1,6 +1,7 @@
 #include "master.h"
 #include <iostream>
 #include <chrono>
+#include <mutex>
 #include <time.h>
 
 static constexpr auto MaxTaskRunTime = std::chrono::seconds(5);
@@ -37,20 +38,45 @@ Task Master::getTask(int taskSeq) {
 void Master::initMapTask() {
     taskPhase_ = MapPhase;
     taskStats_.resize(files_.size());
+    for(auto task : taskStats_) {
+        task.Status = TaskStatus::TaskStatusReady;
+    }
 }
 
 void Master::initReduceTask() {
     taskPhase_ = ReducePhase;
     taskStats_.clear();
     taskStats_.resize(nReduce_);
-    printf("-------initReduceTask--------------\n");
-    printf("-------initReduceTask--------------\n");
+    for(auto task : taskStats_) {
+        task.Status = TaskStatus::TaskStatusReady;
+    }
 }
 RegisterReply Master::RegWorker(rpc_conn conn, RegisterArgs args) {
-    workerSeq_++;
+
     RegisterReply reply;
     reply.WorkerId = workerSeq_;
+    workerSeq_++;
     return reply;
+}
+ReportTaskReply Master::ReportTask(rpc_conn conn, ReportTaskArgs args) {
+    std::lock_guard<std::mutex> lk(mtx_);
+    printf("get report task workid%d:, get report task seq:%d\n", args.WorkerId, args.Seq);
+    printf("get this workid:%d\n", taskStats_[args.Seq].WorkerId);
+    if(args.Phase != taskPhase_ || args.WorkerId != taskStats_[args.Seq].WorkerId) {
+
+        return {};
+    }
+    if(args.Done) {
+
+        taskStats_[args.Seq].Status = TaskStatus::TaskStatusFinish;
+       
+    } else {
+        taskStats_[args.Seq].Status = TaskStatus::TaskStatusErr;
+    }
+
+    // schedule();
+    //                          printf("----------ReportTask---------------------\n");
+    return {};
 }
 void Master::run() {
     t_ = std::thread(&Master::tickSchedule, this);

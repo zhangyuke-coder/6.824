@@ -1,7 +1,17 @@
 #include "worker.h"
+#include <algorithm>
+#include <ios>
 #include <string>
-
+#include <fstream>
 #include "rpc.h"
+#include "wc.hpp"
+static std::string readAllFile(std::string filename) {
+    std::ifstream in(filename);
+    std::ostringstream tmp;
+    tmp << in.rdbuf();
+    std::string str = tmp.str();
+    return str;
+}
 Worker::Worker() {
     maxCount_ = 10;
     work_client_ = new rest_rpc::rpc_client("127.0.0.1", 9000);
@@ -31,6 +41,15 @@ void Worker::run() {
         
         Task t;
         bool flag = reqTask(&t);
+        // printf("------------------run------------------\n");
+        // printf("worker get task \n");
+        // if(t.Alive) {
+        //     printf("Alive \n");
+        // }
+        // printf("reply %s \n", t.FileName.c_str());
+        // printf("reply %d \n", t.Seq);
+        // printf("------------------run------------------\n");
+
         if(!flag) {
             if(count++ < maxCount_) {
                 continue;
@@ -57,14 +76,6 @@ bool Worker::reqTask(Task* t) {
     } catch (std::exception e) {
         return false;
     }
-    
-    printf("worker get task \n");
-    if(reply.task.Alive) {
-        printf("Alive \n");
-    }
-    printf("reply %s \n", reply.task.FileName.c_str());
-    printf("reply %d \n", reply.task.Seq);
-    printf("%d \n", reply.task.Seq);
     *t = reply.task;
     return true;
 }
@@ -84,18 +95,54 @@ void Worker::doTask(Task t) {
         break;
     }
 }
-
-void Worker::doMapTask(Task t) {
+std::string reduceName(int mapIdx, int reduceIdx) {
+    return "mr-" + std::to_string(mapIdx) + "-" + std::to_string(reduceIdx);
+}
+void Worker::doMapTask(Task t) { 
 
     printf("--------------------doMapTask:%d---------------------------\n", t.Seq);
-    std::cout << t.Seq << std::endl;
-    std::cout << t.FileName << std::endl;
-    std::cout << t.NMaps << std::endl;
-    std::cout << t.NReduce << std::endl;
+    std::string target_s = readAllFile(t.FileName);
+    auto targetMap = func::Map("", target_s);
+    std::vector<std::vector<KeyValue>> reduces(t.NReduce);
+    for(auto kv : targetMap) {
+        auto idx = ihash(kv.Key) % t.NReduce;
+        reduces[idx].push_back(kv);
+    }
+
+    for(int i = 0; i < reduces.size(); i++) {
+        auto fileName = reduceName(t.Seq, i);
+        std::ofstream ofs;
+        ofs.open(fileName, std::ios::app);
+        std::sort(reduces[i].begin(), reduces[i].end(), [](KeyValue a, KeyValue b){ return a.Key < b.Key; });
+        for(auto r : reduces[i]) {
+            ofs << r.Key << " " << r.Value << std::endl;
+        }
+        ofs.close();
+        reportTask(t, true, true);
+    }
     printf("--------------------doMapTask:%d---------------------------\n", t.Seq); 
 }
 
 
 void Worker::doReduceTask(Task t) {
     printf("doReduceTask:%d\n", t.Seq);
+    // for(int i = 0; i < t.NMaps; i++) {
+    //     auto fileName = reduceName(i, t.Seq);
+    //     auto contents = readAllFile(fileName);
+
+    // }
+}
+
+void Worker::reportTask(Task t, bool done, bool err) {
+    ReportTaskArgs args;
+    args.Done = done;
+    args.Seq = t.Seq;
+    args.Phase = t.Phase;
+    args.WorkerId = id_;
+    ReportTaskReply reply;
+  
+        reply = work_client_->call<ReportTaskReply>("ReportTask", args);
+   
+    
+    
 }

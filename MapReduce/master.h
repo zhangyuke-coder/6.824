@@ -33,7 +33,7 @@ public:
 public:
     void regTask(TaskArgs* args, Task* task);
     TaskReply GetOneTask(rpc_conn conn, TaskArgs args);
-    ReportTaskReply ReportTask(ReportTaskArgs* args);
+    ReportTaskReply ReportTask(rpc_conn conn, ReportTaskArgs args);
     RegisterReply RegWorker(rpc_conn conn, RegisterArgs args);
 private:
     void schedule();
