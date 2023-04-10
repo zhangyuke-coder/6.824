@@ -1,5 +1,6 @@
 #include <iostream>
 #include <ostream>
+#include <string>
 #include <thread>
 #include <chrono>
 #include <filesystem>
@@ -16,38 +17,55 @@ std::string readAllFile(std::string filename) {
     std::string str = tmp.str();
     return str;
 }
-int main() {
-
-    //获取文件名称, 过滤出txt文件
-    std::string dir = "/home/zyk/VcWorkplace/6.824/MapReduce";
-    DIR* d = opendir(dir.c_str());
-    if (d == NULL)
-    {
-            printf("d == NULL");
-    }
-    std::vector<std::string> targets;
-    struct dirent* entry;
-    while ( (entry=readdir(d)) != NULL)
-    {
-            std::string name = entry->d_name;
-            if(name.substr(0, 2) == "pg") {
-                targets.push_back(dir+ '/' + name);
-            }
-
-    }
-    std::vector<KeyValue> intermediate;
-    intermediate.reserve(700000);
-    for(auto s : targets) {
-        string target_s = readAllFile(s);
-        auto targetMap = func::Map("", target_s);
-        for(auto kv : targetMap) {
-            intermediate.push_back(kv);
+std::vector<std::string> splitw(std::string& strs) {
+    std::vector<std::string> vec;
+    std::string str;
+    for(auto c : strs) {
+        if(c != ' ') {
+            str += c;
+        } else {
+            vec.push_back(str);
+            str = "";
         }
     }
-    sort(intermediate.begin(), intermediate.end(), [](KeyValue a, KeyValue b){ return a.Key < b.Key; });
+    vec.push_back(str);
+    return vec;
+}
+int main() {
+    string str = "asdf 1";
+    auto res = splitw(str);
+    cout << res[0]<< res[1] << endl;
 
-    cout << intermediate.size() << endl;
-    cout << intermediate.back().Key << " " << intermediate.back().Value << endl;
+    // //获取文件名称, 过滤出txt文件
+    // std::string dir = "/home/zyk/VcWorkplace/6.824/MapReduce";
+    // DIR* d = opendir(dir.c_str());
+    // if (d == NULL)
+    // {
+    //         printf("d == NULL");
+    // }
+    // std::vector<std::string> targets;
+    // struct dirent* entry;
+    // while ( (entry=readdir(d)) != NULL)
+    // {
+    //         std::string name = entry->d_name;
+    //         if(name.substr(0, 2) == "pg") {
+    //             targets.push_back(dir+ '/' + name);
+    //         }
+
+    // }
+    // std::vector<KeyValue> intermediate;
+    // intermediate.reserve(700000);
+    // for(auto s : targets) {
+    //     string target_s = readAllFile(s);
+    //     auto targetMap = func::Map("", target_s);
+    //     for(auto kv : targetMap) {
+    //         intermediate.push_back(kv);
+    //     }
+    // }
+    // sort(intermediate.begin(), intermediate.end(), [](KeyValue a, KeyValue b){ return a.Key < b.Key; });
+
+    // cout << intermediate.size() << endl;
+    // cout << intermediate.back().Key << " " << intermediate.back().Value << endl;
     
     // string s = readAllFile("/home/zyk/VcWorkplace/6.824/MapReduce/zyk.txt");
     // auto res = func::Map("zyk.txt", s);

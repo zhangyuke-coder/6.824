@@ -1,8 +1,14 @@
 #include "worker.h"
 #include <algorithm>
+#include <cctype>
+#include <cstdio>
 #include <ios>
+#include <iostream>
 #include <string>
 #include <fstream>
+#include <unordered_map>
+#include <vector>
+#include "asio/error.hpp"
 #include "rpc.h"
 #include "wc.hpp"
 static std::string readAllFile(std::string filename) {
@@ -13,7 +19,7 @@ static std::string readAllFile(std::string filename) {
     return str;
 }
 Worker::Worker() {
-    maxCount_ = 10;
+    maxCount_ = 1000000;
     work_client_ = new rest_rpc::rpc_client("127.0.0.1", 9000);
     bool r = work_client_->connect();
     // work_client_->enable_auto_heartbeat();
@@ -41,15 +47,6 @@ void Worker::run() {
         
         Task t;
         bool flag = reqTask(&t);
-        // printf("------------------run------------------\n");
-        // printf("worker get task \n");
-        // if(t.Alive) {
-        //     printf("Alive \n");
-        // }
-        // printf("reply %s \n", t.FileName.c_str());
-        // printf("reply %d \n", t.Seq);
-        // printf("------------------run------------------\n");
-
         if(!flag) {
             if(count++ < maxCount_) {
                 continue;
@@ -100,7 +97,6 @@ std::string reduceName(int mapIdx, int reduceIdx) {
 }
 void Worker::doMapTask(Task t) { 
 
-    printf("--------------------doMapTask:%d---------------------------\n", t.Seq);
     std::string target_s = readAllFile(t.FileName);
     auto targetMap = func::Map("", target_s);
     std::vector<std::vector<KeyValue>> reduces(t.NReduce);
@@ -120,10 +116,23 @@ void Worker::doMapTask(Task t) {
         ofs.close();
         reportTask(t, true, true);
     }
-    printf("--------------------doMapTask:%d---------------------------\n", t.Seq); 
+    printf("--------------------doMapTask Done:%d---------------------------\n", t.Seq); 
 }
 
-
+std::vector<std::string> split(std::string& strs) {
+    std::vector<std::string> vec;
+    std::string str;
+    for(auto c : strs) {
+        if(c != ' ' && c != '\n') {
+            str += c;
+        } else {
+            vec.push_back(str);
+            str = "";
+        }
+    }
+    vec.push_back(str);
+    return vec;
+}
 void Worker::doReduceTask(Task t) {
     printf("doReduceTask:%d\n", t.Seq);
     // for(int i = 0; i < t.NMaps; i++) {
@@ -131,6 +140,36 @@ void Worker::doReduceTask(Task t) {
     //     auto contents = readAllFile(fileName);
 
     // }
+    std::unordered_map<std::string, std::vector<std::string>> maps;
+    std::string res;
+    for(int i = 0;i < t.NMaps; i++) {
+        std::string filename = reduceName(i, t.Seq);
+        printf("filename: %s\n", filename.c_str());
+        std::string query;
+        std::ifstream in(filename);
+        while(getline(in,query)){
+            auto vec = split(query);
+            // std::cout << query << std::endl;
+            // std::cout << vec[0] << " " << vec[1] << std::endl;
+            maps[vec[0]].push_back(vec[1]);
+        }
+ 
+        for(auto map : maps) {
+            auto temp = func::Reduce(map.first, map.second);
+            // std::cout << temp << std::endl;
+            res = res + map.first + ' ' + temp + '\n';
+        }
+
+        // std::cout << res << std::endl;
+    }
+    std::string reduceName = "mr-out-" + std::to_string(t.Seq);
+    std::cout << reduceName << std::endl;
+    std::ofstream ofs;
+    ofs.open(reduceName, std::ios::app);
+    ofs << res;
+    ofs.close();
+    reportTask(t, true, true);
+    printf("doReduceTask--------------------done:%d\n", t.Seq);
 }
 
 void Worker::reportTask(Task t, bool done, bool err) {

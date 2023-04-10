@@ -1,4 +1,5 @@
 #include "master.h"
+#include <cstdio>
 #include <iostream>
 #include <chrono>
 #include <mutex>
@@ -156,6 +157,7 @@ TaskReply Master::GetOneTask(rpc_conn conn, TaskArgs args) {
     while(tasks_.empty()) {
         cv_.wait(lk);
     }
+    printf("wait---------------------------------\n");
     auto task = tasks_.front();
     tasks_.pop_front();
     TaskReply reply;
