@@ -56,5 +56,5 @@
         "mutex": "cpp",
         "codecvt": "cpp"
     },
-    "cmake.sourceDirectory": "${workspaceFolder}/MapReduce"
+    "cmake.sourceDirectory": "${workspaceFolder}/Raft"
 }
